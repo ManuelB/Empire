@@ -124,7 +124,12 @@
 
 	<target name="compile-test" depends="init, compile-core">
 		<mkdir dir="${test.build.dir}"/>
-
+        <!-- Manuel Blechschmidt 2010-11-08: -->
+        <echo>
+        You can ignore the warning about Annotation types without processors.
+        Most of these annotations are used from JUnit 4 (org.junit.* http://www.junit.org/), JPA (javax.persistence.* http://jcp.org/en/jsr/detail?id=220 and http://jcp.org/en/jsr/detail?id=317) and Empire (com.clarkparsia.empire.*) during runtime.
+        For more information read a Metadata Facility for the JavaTM Programming Language http://www.jcp.org/en/jsr/detail?id=175
+        </echo>
 		<apt debug="${javac.debug}" source="1.5" target="1.5" factory="com.clarkparsia.empire.util.apt.EmpireAnnotationProcessorFactory" destdir="${test.build.dir}">
 			<src path="${test.src.dir}"/>
 			<classpath refid="project.class.path"/>

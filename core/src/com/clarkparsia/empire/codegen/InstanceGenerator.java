@@ -22,24 +22,31 @@ import javassist.CtField;
 import javassist.CtNewMethod;
 import javassist.NotFoundException;
 import javassist.Modifier;
+import javassist.CannotCompileException;
 
 import java.util.Map;
 import java.util.HashMap;
 import java.util.Arrays;
+import java.util.Collection;
 
 import java.lang.reflect.Method;
 
 import com.clarkparsia.empire.SupportsRdfId;
 import com.clarkparsia.empire.util.BeanReflectUtil;
+import static com.clarkparsia.utils.collections.CollectionUtil.find;
+import com.clarkparsia.utils.Predicate;
+import com.google.inject.internal.Sets;
 
 /**
  * <p>Generate implementations of interfaces at runtime via bytecode manipulation.</p>
  *
  * @author Michael Grove
  * @since 0.5.1
- * @version 0.6.5
+ * @version 0.7
  */
 public class InstanceGenerator {
+
+	private static final Collection<Method> processedMethods = Sets.newHashSet();
 
 	/**
 	 * <p>Given a bean-style interface, generate an instance of the interface by implementing getters and setters for each
@@ -54,6 +61,8 @@ public class InstanceGenerator {
 	 * @throws Exception if there is an error while generating the bytecode of the new class.
 	 */
 	public static <T> Class<T> generateInstanceClass(Class<T> theInterface) throws Exception {
+		processedMethods.clear();
+
 		// TODO: can we use some sort of template language for this?
 
 		ClassPool aPool = ClassPool.getDefault();
@@ -97,22 +106,8 @@ public class InstanceGenerator {
 
 		aClass.addConstructor(CtNewConstructor.defaultConstructor(aClass));
 
-		Map<String, Class> aProps = properties(theInterface);
-		for (String aProp : aProps.keySet()) {
-			CtField aNewField = new CtField(aPool.get(aProps.get(aProp).getName()), aProp, aClass);
-
-			if (!hasField(aClass, aNewField.getName())) {
-				aClass.addField(aNewField);
-			}
-
-			if (!hasMethod(aClass, getterName(aProp))) {
-				aClass.addMethod(CtNewMethod.getter(getterName(aProp), aNewField));
-			}
-
-			if (!hasMethod(aClass, setterName(aProp))) {
-				aClass.addMethod(CtNewMethod.setter(setterName(aProp), aNewField));
-			}
-		}
+		generateMethods(theInterface, aPool, aClass);
+		generateMethodsForSuperInterfaces(theInterface, aPool, aClass);
 
 		CtField aIdField = new CtField(aPool.get(SupportsRdfId.class.getName()), "supportsId", aClass);
 		aClass.addField(aIdField, CtField.Initializer.byExpr("new com.clarkparsia.empire.annotation.SupportsRdfIdImpl();"));
@@ -138,7 +133,69 @@ public class InstanceGenerator {
 
 		aClass.freeze();
 
-		return (Class<T>) aClass.toClass();
+		Class<T> aResult = (Class<T>) aClass.toClass();
+
+		try {
+			// make sure this is a valid class, that is, we can create instances of it!
+			aResult.newInstance();
+		}
+		catch (Exception ex) {
+			// TODO: log this?
+			throw ex;
+		}
+
+		return aResult;
+	}
+
+	/**
+	 * For all the parent interfaces of a class, generate implementations of all their methods.  And for their parents, do the same, and the same for their parents, and so on...
+	 * @param theInterface the interface
+	 * @param thePool the class pool to use
+	 * @param theCtClass the concrete implementation of the interface(s)
+	 * @param <T> the type of the interface
+	 * @throws NotFoundException thrown if there is an error generating the methods
+	 * @throws CannotCompileException thrown if there is an error generating the methods
+	 */
+	private static <T> void generateMethodsForSuperInterfaces(final Class<T> theInterface, ClassPool thePool, CtClass theCtClass) throws NotFoundException, CannotCompileException {
+		if (theInterface.getSuperclass() != null) {
+			generateMethods(theInterface.getSuperclass(), thePool, theCtClass);
+			generateMethodsForSuperInterfaces(theInterface.getSuperclass(), thePool, theCtClass);
+		}
+		
+		for (Class<?> aSuperInterface : theInterface.getInterfaces()) {
+			generateMethods(aSuperInterface, thePool, theCtClass);
+
+			generateMethodsForSuperInterfaces(aSuperInterface, thePool, theCtClass);
+		}
+	}
+
+	/**
+	 * For a given interface, generate basic getter and setter methods for all the properties on the interface.
+	 * @param theInterface the interface
+	 * @param thePool the class pool
+	 * @param theClass the concrete implementation of the interface
+	 * @param <T> the type of the interface
+	 * @throws CannotCompileException thrown if there is an error generating the methods
+	 * @throws NotFoundException thrown if there is an error generating the methods
+	 */
+	private static <T> void generateMethods(final Class<T> theInterface, final ClassPool thePool, final CtClass theClass) throws CannotCompileException, NotFoundException {
+		Map<String, Class> aProps = properties(theInterface);
+
+		for (String aProp : aProps.keySet()) {
+			CtField aNewField = new CtField(thePool.get(aProps.get(aProp).getName()), aProp, theClass);
+
+			if (!hasField(theClass, aNewField.getName())) {
+				theClass.addField(aNewField);
+			}
+
+			if (!hasMethod(theClass, getterName(aProp))) {
+				theClass.addMethod(CtNewMethod.getter(getterName(aProp), aNewField));
+			}
+
+			if (!hasMethod(theClass, setterName(aProp))) {
+				theClass.addMethod(CtNewMethod.setter(setterName(aProp), aNewField));
+			}
+		}
 	}
 
 	/**
@@ -211,15 +268,31 @@ public class InstanceGenerator {
 		Map<String, Class> aMap = new HashMap<String, Class>();
 
 		for (Method aMethod : theClass.getDeclaredMethods()) {
-			// we want to ignore methods with implementations, we should not override them.
-			if (!Modifier.isAbstract(aMethod.getModifiers())) {
+
+			// see if we've already processed this method.  Normal .equals for a method will not work because the classes have to be the same,
+			// what we want is the semantics of isAssignableFrom, not .equals between the classes declaring the methods.  Thus, the FINDER
+			// predicate implementation does exactly that.  It's a copy of the Method.equals function, but with the .equals for the declaring
+			// class changed to isAssignableFrom so we get the expected behavior.
+			FINDER.method = aMethod;
+
+			if (find(processedMethods, FINDER)) {
 				continue;
 			}
-			
+
+			// we want to ignore methods with implementations, we should not override them.
+			if (!Modifier.isAbstract(aMethod.getModifiers())) {
+
+				// mark the method as one we've already handled in case we get this method again on a superclass/interface
+				processedMethods.add(aMethod);
+				continue;
+			}
+
 			if (!aMethod.getName().startsWith("get")
 				&& !aMethod.getName().startsWith("is")
+				&& !aMethod.getName().startsWith("has")
 				&& !aMethod.getName().startsWith("set")) {
-				throw new IllegalArgumentException("Non-bean style methods found, implementations for them cannot not be generated");
+
+				throw new IllegalArgumentException("Non-bean style methods found, implementations for them cannot not be generated.  Method was: " + aMethod);
 			}
 
 			String aProp = aMethod.getName().substring(aMethod.getName().startsWith("is") ? 2 : 3);
@@ -228,7 +301,7 @@ public class InstanceGenerator {
 
 			Class aType = null;
 
-			if (aMethod.getName().startsWith("get") || aMethod.getName().startsWith("is")) {
+			if (aMethod.getName().startsWith("get") || aMethod.getName().startsWith("is") || aMethod.getName().startsWith("has")) {
 				aType = aMethod.getReturnType();
 			}
 			else if (aMethod.getName().startsWith("set") && aMethod.getParameterTypes().length > 0) {
@@ -238,8 +311,50 @@ public class InstanceGenerator {
 			if (aType != null) {
 				aMap.put(aProp, aType);
 			}
+
+			// mark the method as one we've already handled in case we get this method again on a superclass/interface
+			processedMethods.add(aMethod);
 		}
 
 		return aMap;
+	}
+
+	private static final FinderPredicate FINDER = new FinderPredicate();
+
+	private static class FinderPredicate implements Predicate<Method> {
+		Method method;
+
+		public boolean accept(final Method theValue) {
+			return overrideEquals(theValue, method);
+		}
+	}
+
+	/**
+	 * Basically a copy of Method.equals, but rather than enforcing a strict equals, it tests for "overridable" equals.  So this will
+	 * return true if the methods are .equals or if the second method can override the first.
+	 * @param obj the first object
+	 * @param other the other object
+	 * @return true if the method is equal to or overrides the other, false otherwise
+	 */
+	private static boolean overrideEquals(Method obj, Method other) {
+		if ((other.getDeclaringClass().isAssignableFrom(obj.getDeclaringClass())) && (obj.getName().equals(other.getName()))) {
+			if (!obj.getReturnType().equals(other.getReturnType())) {
+				return false;
+			}
+
+			Class[] params1 = obj.getParameterTypes();
+			Class[] params2 = other.getParameterTypes();
+			if (params1.length == params2.length) {
+				for (int i = 0; i < params1.length; i++) {
+					if (params1[i] != params2[i])
+						return false;
+				}
+			}
+			
+			return true;
+		}
+		else {
+			return false;
+		}
 	}
 }

@@ -17,6 +17,7 @@ package com.clarkparsia.empire.config;
 
 import com.clarkparsia.empire.util.EmpireAnnotationProvider;
 import com.clarkparsia.empire.util.PropertiesAnnotationProvider;
+import com.clarkparsia.empire.EmpireOptions;
 
 import com.google.inject.Binder;
 import com.google.inject.Provider;
@@ -25,13 +26,14 @@ import com.google.inject.name.Names;
 import java.util.Map;
 import java.util.HashMap;
 import java.io.File;
+import java.lang.reflect.Field;
 
 /**
  * <p>A simple container class for EmpireConfiguration information.</p>
  *
  * @author Michael Grove
  * @since 0.6.2
- * @version 0.6.2
+ * @version 0.7
  */
 public class EmpireConfiguration {
 	private Class<? extends EmpireAnnotationProvider> mAnnotationProvider = PropertiesAnnotationProvider.class;
@@ -48,6 +50,16 @@ public class EmpireConfiguration {
 		
 		mGeneralConfiguration = theGeneralConfiguration;
 		mUnitConfiguration = theUnitConfiguration;
+
+		for (String aKey : mGeneralConfiguration.keySet()) {
+			try {
+				Field aField = EmpireOptions.class.getField(aKey);
+				aField.setBoolean(null, Boolean.parseBoolean(mGeneralConfiguration.get(aKey)));
+			}
+			catch (Exception e) {
+				// no-op, field doesn't exist, or the value is badly formatted. oh well
+			}
+		}
 	}
 
 	public Class<? extends EmpireAnnotationProvider> getAnnotationProvider() {
@@ -60,6 +72,10 @@ public class EmpireConfiguration {
 
 	public Map<String, String> getUnitConfig(final String theUnitName) {
 		return mUnitConfiguration.get(theUnitName);
+	}
+
+	public Map<String, String> getGlobalConfig() {
+		return mGeneralConfiguration;
 	}
 
 	public String get(String theKey) {

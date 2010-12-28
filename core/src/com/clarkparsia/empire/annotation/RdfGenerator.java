@@ -31,7 +31,9 @@ import org.openrdf.model.vocabulary.XMLSchema;
 import org.openrdf.model.vocabulary.RDFS;
 
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Collection;
 import java.util.HashMap;
@@ -217,6 +219,7 @@ public class RdfGenerator {
 	public static <T> T fromRdf(Class<T> theClass, SupportsRdfId.RdfKey theId, DataSource theSource) throws InvalidRdfException, DataSourceException {
 		T aObj;
 
+		long start = System.currentTimeMillis();
 		try {
 			aObj = Empire.get().instance(theClass);
 		}
@@ -226,17 +229,23 @@ public class RdfGenerator {
 		catch (ProvisionException ex) {
 			aObj = null;
 		}
+		LOGGER.debug("Tried to get instance of class : " + (System.currentTimeMillis()-start ) );
+		start = System.currentTimeMillis();
 
 		if (aObj == null) {
 			// this means Guice construction failed, which is not surprising since that's not going to be the default.
 			// so we'll try our own reflect based creation or create bytecode for an interface.
 
 			try {
+				long istart = System.currentTimeMillis();
 				if (theClass.isInterface() || Modifier.isAbstract(theClass.getModifiers())) {
+					
 					aObj = com.clarkparsia.empire.codegen.InstanceGenerator.generateInstanceClass(theClass).newInstance();
+					LOGGER.debug("CodeGenerated instance in : " + (System.currentTimeMillis() - istart) + "ms. ");
 				}
 				else {
 					aObj = theClass.newInstance();
+					LOGGER.debug("CodeGenerated instance in : " + (System.currentTimeMillis() - istart) + "ms. ");
 				}
 			}
 			catch (InstantiationException e) {
@@ -248,9 +257,14 @@ public class RdfGenerator {
 			catch (Exception e) {
 				throw new InvalidRdfException("Cannot create an instance of bean", e);
 			}
+			LOGGER.debug("Got reflect instance of class : " + (System.currentTimeMillis()-start ) );
+			start = System.currentTimeMillis();
+
 		}
 
 		asSupportsRdfId(aObj).setRdfId(theId);
+		LOGGER.debug("Has rdfId : " + (System.currentTimeMillis()-start ) );
+		start = System.currentTimeMillis();
 
 		return fromRdf(aObj, theSource);
 	}
@@ -268,6 +282,8 @@ public class RdfGenerator {
 	private static <T> T fromRdf(T theObj, DataSource theSource) throws InvalidRdfException, DataSourceException {
 		final SupportsRdfId aSupportsRdfId = asSupportsRdfId(theObj);
 		final SupportsRdfId.RdfKey theKeyObj = aSupportsRdfId.getRdfId();
+		
+		LOGGER.debug("Got obj : " + theObj );
 		
 		if (OBJECT_M.containsKey(theKeyObj)) {
 			// TODO: this is probably a safe cast, i dont see how something w/ the same URI, which should be the same
@@ -452,7 +468,7 @@ public class RdfGenerator {
 	 * @throws InvalidRdfException thrown if the object does not support the minimum to create or retrieve an rdf:ID
 	 * @see SupportsRdfId
 	 */
-	private static Resource id(Object theObj) throws InvalidRdfException {
+	public static Resource id(Object theObj) throws InvalidRdfException {
 		SupportsRdfId aSupport = asSupportsRdfId(theObj);
 
 		if (aSupport.getRdfId() != null) {
@@ -567,7 +583,7 @@ public class RdfGenerator {
 													 aSubj);
 
 			for (AccessibleObject aAccess : aAccessors) {
-
+				LOGGER.debug("Getting rdf for : " + aAccess.toString() );
 				AsValueFunction aFunc = new AsValueFunction(aAccess);
 
 				if (aAccess.isAnnotationPresent(Transient.class)
@@ -868,7 +884,7 @@ public class RdfGenerator {
 	}
 
 	private static String getLanguageForLocale() {
-		return Locale.getDefault() == null ? "en" : Locale.getDefault().toString().substring(0, Locale.getDefault().toString().indexOf("_"));
+		return Locale.getDefault() == null || Locale.getDefault().toString().equals("") ? "en" : Locale.getDefault().toString().substring(0, Locale.getDefault().toString().indexOf("_"));
 	}
 
 	private static Class refineClass(Object theAccessor, Class theClass, DataSource theSource, Resource theId) {
@@ -1015,9 +1031,9 @@ public class RdfGenerator {
 				BNode aBNode = (BNode) theValue;
 
 				// we need to figure out what type of bean this instance maps to.
-					Class<?> aClass = BeanReflectUtil.classFrom(mAccessor);
+				Class<?> aClass = BeanReflectUtil.classFrom(mAccessor);
 
-					aClass = refineClass(mAccessor, aClass, mSource, aBNode);
+				aClass = refineClass(mAccessor, aClass, mSource, aBNode);
 
 				if (Collection.class.isAssignableFrom(BeanReflectUtil.classFrom(mAccessor))) {
 					// the field takes a collection, lets create a new instance of said collection, and hopefully the
@@ -1027,7 +1043,6 @@ public class RdfGenerator {
 					// since bnode id references are not guaranteed to be stable in SPARQL, ie just because its id "a"
 					// in the result set, does not mean i can do another query for _:a and get the expected results.
 					// and you can't do a describe for the same reason.
-
 
 					try {
 						String aQuery = getBNodeConstructQuery(mSource, mResource, mProperty);
@@ -1050,7 +1065,12 @@ public class RdfGenerator {
 					return getProxyOrDbObject(mAccessor, aClass, aBNode, mSource);
 				}
 				catch (Exception e) {
-					throw new RuntimeException(e);
+					if (EmpireOptions.STRICT_MODE) {
+						throw new RuntimeException(e);
+					}
+					else {
+						return null;
+					}
 				}
 			}
 			else if (theValue instanceof URI) {
@@ -1069,11 +1089,23 @@ public class RdfGenerator {
 					}
 				}
 				catch (Exception e) {
-					throw new RuntimeException(mAccessor + " " + e);
+					if (EmpireOptions.STRICT_MODE) {
+						throw new RuntimeException(e);
+					}
+					else {
+						LOGGER.warn("Problem applying value : " + e.toString() + ", " + e.getCause() );
+						return null;
+					}
 				}
 			}
 			else {
-				throw new RuntimeException("Unexpected Value type");
+				if (EmpireOptions.STRICT_MODE) {
+					throw new RuntimeException("Unexpected Value type");
+				}
+				else {
+					LOGGER.warn("Problem applying value : Unexpected Value type" );
+					return null;
+				}
 			}
 		}
 	}

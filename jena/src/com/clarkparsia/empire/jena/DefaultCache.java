@@ -15,18 +15,40 @@
 
 package com.clarkparsia.empire.jena;
 
-import com.clarkparsia.empire.impl.RdfQueryFactory;
-import com.clarkparsia.empire.impl.sparql.ARQSPARQLDialect;
+import com.google.inject.internal.Maps;
+
+import java.util.Map;
+import java.util.Collections;
 
 /**
- * <p>Jena/ARQ specific query factory.</p>
+ * <p>A basic cache implementation backed by a Map</p>
  *
  * @author Michael Grove
- * @since 0.6.3
- * @version 0.6.3
+ * @since 0.7
+ * @version 0.7
  */
-class JenaSPARQLQueryFactory extends RdfQueryFactory {
-	public JenaSPARQLQueryFactory(final JenaDataSource theJenaDataSource) {
-		super(theJenaDataSource, ARQSPARQLDialect.instance());
+class DefaultCache<K,V> implements Cache<K,V> {
+
+	/**
+	 * The actual cache
+	 */
+	private Map<K,V> cache = Collections.synchronizedMap(Maps.<K,V>newHashMap());
+
+	/**
+	 * @inheritDoc
+	 */
+	public V get(final K theKey) {
+		return cache.get(theKey);
+	}
+
+	/**
+	 * @inheritDoc
+	 */
+	public Cache<K, V> add(final K theKey, final V theValue) {
+		if (!cache.containsKey(theKey)) {
+			cache.put(theKey, theValue);
+		}
+
+		return this;
 	}
 }

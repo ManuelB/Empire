@@ -32,6 +32,7 @@ import com.google.inject.Guice;
 import com.google.inject.Module;
 import com.google.inject.Inject;
 
+
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Collection;
@@ -45,7 +46,7 @@ import org.openrdf.model.vocabulary.XMLSchema;
  *
  * @author Michael Grove
  * @since 0.1
- * @version 0.6.6
+ * @version 0.7
  */
 public class Empire {
 
@@ -153,8 +154,18 @@ public class Empire {
 	 */
 	public static void init(EmpireModule... theModules) {
 		mModules.clear();
+		
+		init(new HashSet<EmpireModule>(Arrays.asList(theModules)));
+	}
+	
+	/**
+	 * Initialize Empire with the given set of Guice Modules
+	 * @param theModules the modules to use with Empire
+	 */
+	public static void init(Collection<EmpireModule> theModules) {
+		mModules.clear();
 
-		Collection<EmpireModule> aModules = new HashSet<EmpireModule>(Arrays.asList(theModules));
+		Collection<EmpireModule> aModules = new HashSet<EmpireModule>(theModules);
 
 		if (aModules.isEmpty() || !find(aModules, new FindDefaultEmpireModulePredicate())) {
 			aModules.add(new DefaultEmpireModule());

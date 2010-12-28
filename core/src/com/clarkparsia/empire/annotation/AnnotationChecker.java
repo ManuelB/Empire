@@ -38,6 +38,7 @@ import java.util.HashSet;
  * and all classes need an {@link RdfsClass} annotation.</p>
  *
  * @author Michael Grove
+ * @author uoccou
  * @since 0.6.5
  * @version 0.7
  */
@@ -65,7 +66,7 @@ public class AnnotationChecker {
 							  : ((Method)aObj).getReturnType();
 
 				if (!Collection.class.isAssignableFrom(aType)) {
-					throw new EmpireException("Using OneToMany or ManyToMany annotation on a non-collection field.");
+					throw new EmpireException("Using OneToMany or ManyToMany annotation on a non-collection field : " + theClass + "." + aType);
 				}
 			}
 		}

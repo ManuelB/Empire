@@ -19,6 +19,7 @@ import com.clarkparsia.empire.ds.Alias;
 import com.clarkparsia.empire.ds.DataSource;
 
 import com.clarkparsia.empire.ds.DataSourceException;
+import com.clarkparsia.empire.config.EmpireConfiguration;
 
 import com.clarkparsia.utils.io.Encoder;
 
@@ -27,6 +28,8 @@ import com.clarkparsia.utils.BasicUtils;
 import com.hp.hpl.jena.rdf.model.Model;
 import com.hp.hpl.jena.rdf.model.RDFReader;
 import com.hp.hpl.jena.shared.JenaException;
+import com.google.inject.name.Named;
+import com.google.inject.Inject;
 
 import java.util.Map;
 
@@ -40,15 +43,33 @@ import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
 
+import org.apache.log4j.LogManager;
+import org.apache.log4j.Logger;
+
 /**
  * <p>Default implementation for creating DataSources backed by Jena models</p>
  *
  * @author Michael Grove
+ * @author uoccou
  * @since 0.6.3
- * @version 0.6.3
+ * @version 0.7
  */
 @Alias("jena")
-public class DefaultJenaDataSourceFactory extends JenaDataSourceFactory implements JenaConfig {
+class DefaultJenaDataSourceFactory extends JenaDataSourceFactory implements JenaConfig {
+
+	/**
+	 * Application logger
+	 */
+	private final Logger LOGGER = LogManager.getLogger(this.getClass());
+
+	/**
+	 * Create a new DefaultJenaDataSourceFactory
+	 * @param theContainerConfig the configuration of the container
+	 */
+	@Inject
+	public DefaultJenaDataSourceFactory(@Named("ec") EmpireConfiguration theContainerConfig) {
+		super(theContainerConfig);
+	}
 
 	/**
 	 * @inheritDoc
@@ -62,21 +83,45 @@ public class DefaultJenaDataSourceFactory extends JenaDataSourceFactory implemen
 	 * @inheritDoc
 	 */
 	public DataSource create(final Map<String, Object> theMap) throws DataSourceException {
+		
+		DataSource aSource = null;
 		Model aModel = createModel(theMap);
+		
+		if (aModel != null) {
 
-		if (theMap.containsKey(STREAM) && theMap.containsKey(FORMAT)) {
-			load(aModel, asReader(theMap.get(STREAM)),
-				 theMap.get(FORMAT).toString(),
-				 theMap.containsKey(BASE) ? theMap.get(BASE).toString() : "");
+			LOGGER.debug("Got a model - creating DataSource ");
+			
+			if (theMap.containsKey(STREAM) && theMap.containsKey(FORMAT)) {
+				load(aModel, asReader(theMap.get(STREAM)),
+					 theMap.get(FORMAT).toString(),
+					 theMap.containsKey(BASE) ? theMap.get(BASE).toString() : "");
+			}
+	
+			if (theMap.containsKey(FILES)) {
+				loadFiles(aModel,
+						  theMap.get(FILES).toString(),
+						  theMap.containsKey(BASE) ? theMap.get(BASE).toString() : "");
+			}
+	
+			if (isTdb(theMap)) {
+				aSource = new TDBJenaDataSource(aModel);
+
+				//@uoccou would be nicer to use TransactionalDataSource but needs something like
+				//TDB.sync(((TDBModel)((JenaDataSource)DataSourceUtil.asTripleStore(mDataSource)).getModel()))
+				//
+				//aSource = new TransactionalDataSource(new JenaDataSource(aModel));
+			}
+			else {
+				// only TDB needs special treatment
+				aSource = new JenaDataSource(aModel);
+				
+			}
 		}
-
-		if (theMap.containsKey(FILES)) {
-			loadFiles(aModel,
-					  theMap.get(FILES).toString(),
-					  theMap.containsKey(BASE) ? theMap.get(BASE).toString() : "");
+		else {
+			LOGGER.error("Could not get a model - not creating DataSource. ");
 		}
-
-		return new JenaDataSource(aModel);
+		
+		return aSource;
 	}
 
 	/**
